@@ -1,0 +1,55 @@
+---
+workdir:  "scratch/"
+threads:   10
+memory: "100" # in Gb (e.g. '100' stands for 100Gb)
+fastqdir:  "/home/mgalland/data/01_sequencing_runs/20170718_Hartwig/"
+resultdir: "results/"
+
+samples:
+  LA1777:
+    forward:  "170710_HMFreg0149_FR11439656_LA1777/LA1777_R1.fastq.gz"
+    reverse:  "170710_HMFreg0149_FR11439656_LA1777/LA1777_R2.fastq.gz"
+  PI127826:
+    forward:  "170710_HMFreg0149_FR11439654_PI127826/PI127826_R1.fastq.gz"
+    reverse:  "170710_HMFreg0149_FR11439654_PI127826/PI127826_R2.fastq.gz"
+  LA1777m: 
+    forward:  "170710_HMFreg0149_FR11439655_LA1777-2/LA1777m_R1.fastq.gz"
+    reverse:  "170710_HMFreg0149_FR11439655_LA1777-2/LA1777m_R2.fastq.gz"
+
+adapters: "../../info/TruSeq3-PE-2.fa"
+
+# Fastqc
+fastqc:
+  threads: 10 # memory threads (each takes will be allocated 250MB of memory)
+
+# trimmomatic
+trimmomatic:
+  adapters: "/zfs/datastore0/software/src/Trimmomatic-0.36/adapters/TruSeq3-PE.fa"
+  seedMisMatches: '2'
+  palindromeClipTreshold: '30'      # specifies how accurate the match between the two 'adapter ligated' reads must be for PE palindrome read alignment.30 = 50 bases
+  simpleClipThreshold: '10'         # specifies how accurate the match between any adapter sequence must be against a read
+  minAdapterLength: '8'             # palindrome mode verify that a min length of adapters are aligned. 8 is default 
+  LeadMinTrimQual: '10'             # specifies the minimum quality required to keep a base from the beggining of the read
+  TrailMinTrimQual: '10'            # specifies the minimum quality required to keep a base from the end of the read
+  windowSize: '4'                   # specifies the number of bases to average across                     
+  avgMinQual: '20'                  # average quality required for the window to be retained
+  minReadLength: '100'
+  phred: "-phred33" # phred: for illumina >1.8 the quality score are encoded by phred33
+
+# Platanus
+platanus: 
+  assemble:
+    kmer: '32'                 # Initial k-mer size (default -k 32)
+    stepsizekmerextension: "10"# smaller INT values increase time and enhance accuracy of contigs (default -s 10)
+    minkmercov: "2"            # Through assembly, k-mer size increases and coverage cutoff decreases. The coverage cutoff does not fall below INT. (default -c 2)
+    maxdiffbubblecrush: '0.2'  # for high heterozygosity of the sample increase this value (-u >=0.2)
+    kmerextensionsafety: "10"  # K-mer extension safety level (default 10.0) Smaller FLOAT increases the final k-mer size. If you want to extend contigs at the cost of accuracy, set small FLOAT (Ex. -a 5.0).                          
+    maxdiffbranch: "0.5"       # Maximum difference for branch cutting (coverage ratio, default -d 0.5) Smaller FLOAT increase the accuracy. If error rate is low, small FLOAT may be suitable (Ex. -d 0.3).
+    memory: "100" # in Gb (e.g. '100' stands for 100Gb, default: -m 100)
+
+  
+
+
+  
+
+

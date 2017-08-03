@@ -1,0 +1,220 @@
+"""
+Snakefile
+"""
+#############################
+# Load pipeline configuration
+#############################
+configfile: "config.yaml"
+
+WORK_DIR = config["workdir"]
+RES_DIR = config["resultdir"]
+THREADS = config["threads"]
+
+
+
+# Platanus
+
+## Assembly step
+KMER = config["platanus"]["assemble"]["kmer"] 
+KMER_EXT = config["platanus"]["assemble"]["stepsizekmerextension"]
+KMER_COV = config["platanus"]["assemble"]["minkmercov"]
+MAX_DIFF_BUBBLE = config["platanus"]["assemble"]["maxdiffbubblecrush"]
+KMER_EXT_SAFETY = config["platanus"]["assemble"]["kmerextensionsafety"] 
+MAX_DIFF_BRANCH = config["platanus"]["assemble"]["maxdiffbranch"]
+MEM = config["platanus"]["assemble"]["memory"]
+
+
+
+# Wildcard functions (to get wildcards)
+def get_forward_files(wildcards):
+    "get forward reads"
+    return config["fastqdir"] + config["samples"][wildcards.sample]["forward"]
+
+def get_reverse_files(wildcards):
+    "get reverse reads"
+    return config["fastqdir"] + config["samples"][wildcards.sample]["reverse"]
+
+
+#################
+# Desired output
+#################
+ORIGINAL_FASTQC = expand(RES_DIR + "fastqc/original/{sample}_{read}_fastqc.zip",sample=config["samples"].keys(),read=["R1","R2"])
+TRIMMED_FASTQC = expand(RES_DIR + "fastqc/trimmed/{sample}_{read}_fastqc.html",sample=config["samples"].keys(),read=["R1","R2"])
+TRIMMED = expand(WORK_DIR + "trimmed/{sample}_{read}.fastq.gz",sample=config["samples"].keys(),read=["R1","R2"])
+ASSEMBLIES = expand(RES_DIR + "{sample}_gapClosed.fa",sample=config["samples"].keys())
+
+MASTER_FILES = ["Snakefile","config.yaml","environment.yaml"]
+
+rule all:
+	input:
+		ORIGINAL_FASTQC,
+		TRIMMED_FASTQC,
+		ASSEMBLIES,
+		MASTER_FILES
+	message:"all done!"
+   
+#################
+# Snakemake rules
+#################
+
+###################
+# Copy master files
+###################
+rule copy_master_files:
+    input:
+        "Snakefile",
+        "config.yaml",
+        "environment.yaml"
+    output: 
+        RES_DIR + "Snakefile",
+        RES_DIR + "config.yaml",
+        RES_DIR + "environment.yaml"
+    shell:
+        "cp {input} results/"
+
+#####################################
+# Assembly
+#####################################
+rule platanus_gap_close:
+    input: 
+        scaffolds = WORK_DIR + "scratch/platanus/{sample}_scaffolds.fa",
+        forward = WORK_DIR + "trimmed/{sample}_R1.fastq",
+        reverse = WORK_DIR + "trimmed/{sample}_R2.fastq"
+    output:
+        RES_DIR + "{sample}_gapClosed.fa"
+    message:"closing gaps in {wildcards.sample} scaffolds"
+    params:
+        prefix = RES_DIR + "{sample}" 
+    shell:
+        "platanus gap_close -ed 0.1 -o {params.prefix} -t {THREADS} "
+        "-c {input.scaffolds} "
+        "-IP1 {input.forward} {input.reverse}"
+
+rule platanus_scaffold:
+    input:
+        forward = WORK_DIR + "trimmed/{sample}_R1.fastq",
+        reverse = WORK_DIR + "trimmed/{sample}_R2.fastq",
+        contigs = WORK_DIR + "platanus/{sample}_contig.fa",
+        bubbles = WORK_DIR + "platanus/{sample}_contigBubble.fa"
+    output:
+        WORK_DIR + "scratch/platanus/{sample}_scaffolds.fa"
+    message:"scaffolding {wildcards.sample} genome"
+    params:
+        WORK_DIR + "scratch/platanus/{sample}"
+    shell:
+        "platanus scaffold -u 0.2 -o {params} -c {input.contigs} -b {input.bubbles} -IP1 {input.forward} {input.reverse}"
+
+rule platanus_assemble:
+    input:
+        forward = WORK_DIR + "trimmed/{sample}_R1.fastq",
+        reverse = WORK_DIR + "trimmed/{sample}_R2.fastq"
+    output:
+        WORK_DIR + "platanus/{sample}_contig.fa",
+        WORK_DIR + "platanus/{sample}_contigBubble.fa"
+    message:"Contig assembly of {wildcards.sample} using Platanus 1.2.4"
+    params:
+        prefix = WORK_DIR + "platanus/{sample}"
+    shell:
+        "platanus assemble -t {THREADS} -m {MEM} "
+        "-k {KMER} "
+        "-s {KMER_EXT} "
+        "-c {KMER_COV} "
+        "-u {MAX_DIFF_BUBBLE} "
+        "-a {KMER_EXT_SAFETY} "
+        "-d {MAX_DIFF_BRANCH} "
+        "-o {params.prefix} "
+        "-f {input.forward} {input.reverse}"
+    
+       
+rule unzip:
+    input:
+        forward = WORK_DIR + "trimmed/{sample}_R1.fastq.gz",
+        reverse = WORK_DIR + "trimmed/{sample}_R2.fastq.gz"
+    output:
+        forward = temp(WORK_DIR + "trimmed/{sample}_R1.fastq"),
+        reverse = temp(WORK_DIR + "trimmed/{sample}_R2.fastq")
+    message:"unzipping {input}"
+    shell:
+        "zcat {input.forward} > {output.forward};"
+        "zcat {input.reverse} > {output.reverse}"  
+
+########## 
+# Trimming
+##########
+rule fastqc_trimmed:
+    input:
+        forward = WORK_DIR + "trimmed/{sample}_R1.fastq.gz",
+        reverse = WORK_DIR + "trimmed/{sample}_R2.fastq.gz",
+    output:
+        forward = RES_DIR + "fastqc/trimmed/{sample}_R1_fastqc.html",
+        reverse = RES_DIR + "fastqc/trimmed/{sample}_R2_fastqc.html"
+    params:
+        dir = RES_DIR + "fastqc/trimmed/",
+        threads = config["fastqc"]["threads"]
+    message:"computing FastQC report for trimmed {wildcards.sample} reads"
+    shell:
+        "fastqc -o {params.dir} --extract -t {params.threads} {input.forward};"
+        "fastqc -o {params.dir} --extract -t {params.threads} {input.reverse}"    
+
+rule trimmomatic:
+    input:
+        forward = get_forward_files,
+        reverse = get_reverse_files,
+        adapters = config["adapters"]
+    output:
+        forward = temp(WORK_DIR + "trimmed/{sample}_R1.fastq.gz"),
+        reverse = temp(WORK_DIR + "trimmed/{sample}_R2.fastq.gz"),
+        forwardUnpaired = temp(WORK_DIR + "trimmed/{sample}_R1_unpaired.fastq.gz"),
+        reverseUnpaired = temp(WORK_DIR + "trimmed/{sample}_R2_unpaired.fastq.gz")
+    message: "trimming {wildcards.sample} reads"
+    log:
+        RES_DIR + "logs/trimmomatic/{sample}.log"
+    params :
+        seedMisMatches =            str(config['trimmomatic']['seedMisMatches']),
+        palindromeClipTreshold =    str(config['trimmomatic']['palindromeClipTreshold']),
+        simpleClipThreshhold =      str(config['trimmomatic']['simpleClipThreshold']),
+        minAdapterLength =          str(config['trimmomatic']['minAdapterLength']),
+        LeadMinTrimQual =           str(config['trimmomatic']['LeadMinTrimQual']),
+        TrailMinTrimQual =          str(config['trimmomatic']['TrailMinTrimQual']),
+        windowSize =                str(config['trimmomatic']['windowSize']),
+        avgMinQual =                str(config['trimmomatic']['avgMinQual']),
+        minReadLen =                str(config['trimmomatic']['minReadLength']),
+        phred = 		    str(config["trimmomatic"]["phred"])
+    shell:
+        "trimmomatic PE {params.phred} -threads {THREADS} "
+        "{input.forward} {input.reverse} "
+        "{output.forward} {output.forwardUnpaired} "
+        "{output.reverse} {output.reverseUnpaired} "
+        "ILLUMINACLIP:{input.adapters}:{params.seedMisMatches}:{params.palindromeClipTreshold}:{params.simpleClipThreshhold}:{params.minAdapterLength} "
+        "LEADING:{params.LeadMinTrimQual} "
+        "TRAILING:{params.TrailMinTrimQual} "
+        "SLIDINGWINDOW:{params.windowSize}:{params.avgMinQual} "
+        "MINLEN:{params.minReadLen} 2>{log}"
+
+#####################
+# First FastQC report
+####################
+rule fastqc_original_forward:
+    input:
+        forward = get_forward_files,
+    output:
+        forward = RES_DIR + "fastqc/original/{sample}_R1_fastqc.zip"
+    params:
+        dir = RES_DIR + "fastqc/original/",
+        threads = config["fastqc"]["threads"]
+    message:"computing FastQC report for original {wildcards.sample} forward reads"
+    shell:
+        "fastqc -o {params.dir} --extract -t {params.threads} {input.forward}"
+    
+rule fastqc_original_reverse:
+    input:
+        reverse = get_reverse_files
+    output:
+        reverse = RES_DIR + "fastqc/original/{sample}_R2_fastqc.zip"
+    params:
+        dir = RES_DIR + "fastqc/original/",
+        threads = config["fastqc"]["threads"]
+    message:"computing FastQC report for original {wildcards.sample} reverse reads"
+    shell:
+        "fastqc -o {params.dir} --extract -t {params.threads} {input.reverse};" 
+
